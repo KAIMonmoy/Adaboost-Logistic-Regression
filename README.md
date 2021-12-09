@@ -1,4 +1,4 @@
-# ML Offline - 1
+# Logistic Regression and AdaBoost for Classification
 
 ## Requirements
 * OS: Ubuntu/Debian (Linux)
