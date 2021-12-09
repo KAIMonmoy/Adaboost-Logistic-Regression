@@ -19,8 +19,8 @@ class ActivationStrategy(enum.Enum):
 # ----------------------------------------------------------------------------
 
 class LogisticRegression:
-    def __init__(self, W: np.ndarray, activation_strategy: ActivationStrategy):
-        self.W = W
+    def __init__(self, activation_strategy: ActivationStrategy = ActivationStrategy.SIGMOID):
+        self.W = None
         if activation_strategy == ActivationStrategy.TANH:
             self.activation_function = tanh_activation
             self.cost_function = tanh_cost
@@ -36,7 +36,7 @@ class LogisticRegression:
         Y = target
 
         if self.W is None:
-            self.W = np.random.random((X.shape[1] + 1, 1))
+            self.W = np.random.random((X.shape[1], 1))
 
         assert X.shape[1] == self.W.shape[0]
 
@@ -49,30 +49,30 @@ class LogisticRegression:
             A = self.activation_function(X @ self.W)
 
             cost = self.cost_function(Y, A)
-            accuracy = accuracy_score(Y, A)
+            accuracy = accuracy_score(Y, np.round(A).astype(int))
+
+            if (i + 1) % 25 == 0:
+                print(f"Epoch {i + 1}: Accuracy={accuracy}, Loss={cost}")
 
             if accuracy > earlystop_acc:
-                print(f"Early Stopping: Accuracy ({accuracy}) > EarlyStop Accuracy({earlystop_acc})")
+                print(f"\nEarly Stopping @ {i+1}th Epoch\nAccuracy ({accuracy}) > EarlyStopAccuracy({earlystop_acc})\n")
                 break
 
             gradient = self.gradient_function(X, Y, A)
             self.W -= (learning_rate * gradient)
 
-            if (i + 1) % 5 == 0:
-                print(f"Epoch {i + 1}: Accuracy={accuracy}, Loss={cost}")
-
             history['cost'].append(cost)
             history['accuracy'].append(accuracy)
 
-            return history
+        return history
 
     def predict(self, features: np.ndarray) -> np.ndarray:
-        assert self.W
+        assert self.W is not None
 
         X = np.insert(features, 0, 1.0, axis=1)
         assert X.shape[1] == self.W.shape[0]
 
-        return self.activation_function(X @ self.W)
+        return np.round(self.activation_function(X @ self.W)).astype(int)
 
     def save_weights(self, filename: str):
         assert bool(filename) and type(filename) is str
@@ -106,13 +106,13 @@ def sigmoid_activation(tensor: np.ndarray) -> np.ndarray:
 # ----------------------------------------------------------------------------
 
 def sigmoid_cost(y_real: np.ndarray, y_pred: np.ndarray) -> float:
-    assert y_real.shape == y_pred.shape
-    return -1 * np.mean(y_real * np.log(y_pred) + (1 - y_real) * np.log(y_pred))
+    assert y_real.shape == y_pred.shape, f"{y_real.shape}, {y_pred.shape}"
+    return -1 * np.mean(y_real * np.log(y_pred) + (1 - y_real) * np.log(1 - y_pred))
 
 
 def tanh_cost(y_real: np.ndarray, y_pred: np.ndarray) -> float:
-    assert y_real.shape == y_pred.shape
-    return -1 * np.mean((1 + y_real) / 2 * np.log((1 + y_pred) / 2)) + ((1 - y_real) / 2 * np.log((1 - y_pred) / 2))
+    assert y_real.shape == y_pred.shape, f"{y_real.shape}, {y_pred.shape}"
+    return -1 * np.mean((1 + y_real) / 2 * np.log((1 + y_pred) / 2) + (1 - y_real) / 2 * np.log((1 - y_pred) / 2))
 
 
 # ----------------------------------------------------------------------------
@@ -131,3 +131,31 @@ def tanh_gradient(X: np.ndarray, Y: np.ndarray, A: np.ndarray) -> np.ndarray:
     assert X.shape[0] == Y.shape[0]
 
     return np.mean(X * (A - Y), axis=0).reshape(-1, 1)
+
+
+# ----------------------------------------------------------------------------
+#  Main
+# ----------------------------------------------------------------------------
+
+def main():
+    from sklearn import datasets
+    feat, tgt = datasets.make_classification(200, 4, random_state=94)
+    tgt = tgt.reshape(-1, 1)
+
+    f_t, t_t = feat[:150], tgt[:150]
+    f_v, t_v = feat[150:], tgt[150:]
+
+    learner = LogisticRegression(ActivationStrategy.TANH)
+
+    history = learner.train(f_t, t_t, epoch=5000, earlystop_acc=.8)
+    y_p = learner.predict(f_v)
+    print('Validation Accuracy', accuracy_score(t_v, y_p))
+
+    import matplotlib.pyplot as plt
+    plt.plot(history['accuracy'])
+    plt.plot(history['cost'])
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
