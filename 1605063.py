@@ -21,6 +21,7 @@ class ActivationStrategy(enum.Enum):
 class LogisticRegression:
     def __init__(self, activation_strategy: ActivationStrategy = ActivationStrategy.SIGMOID):
         self.W = None
+        self.activation_strategy = activation_strategy
         if activation_strategy == ActivationStrategy.TANH:
             self.activation_function = tanh_activation
             self.cost_function = tanh_cost
@@ -49,7 +50,11 @@ class LogisticRegression:
             A = self.activation_function(X @ self.W)
 
             cost = self.cost_function(Y, A)
-            accuracy = accuracy_score(Y, np.round(A).astype(int))
+
+            if self.activation_strategy == ActivationStrategy.TANH:
+                accuracy = accuracy_score(Y, np.where(A >= 0, 1, -1))
+            else:
+                accuracy = accuracy_score(Y, np.where(A >= 0.5, 1, 0))
 
             if (i + 1) % 25 == 0:
                 print(f"Epoch {i + 1}: Accuracy={accuracy}, Loss={cost}")
@@ -72,7 +77,10 @@ class LogisticRegression:
         X = np.insert(features, 0, 1.0, axis=1)
         assert X.shape[1] == self.W.shape[0]
 
-        return np.round(self.activation_function(X @ self.W)).astype(int)
+        if self.activation_strategy == ActivationStrategy.TANH:
+            return np.where(self.activation_function(X @ self.W) >= 0, 1, -1)
+
+        return np.where(self.activation_function(X @ self.W) >= 0.5, 1, 0)
 
     def save_weights(self, filename: str):
         assert bool(filename) and type(filename) is str
@@ -141,15 +149,15 @@ def main():
     from sklearn import datasets
     feat, tgt = datasets.make_classification(200, 4, random_state=94)
     tgt = tgt.reshape(-1, 1)
+    tgt = np.where(tgt > 0, 1, -1)
 
-    f_t, t_t = feat[:150], tgt[:150]
-    f_v, t_v = feat[150:], tgt[150:]
+    f_t, t_t = feat[:180], tgt[:180]
+    f_v, t_v = feat[180:], tgt[180:]
 
-    learner = LogisticRegression(ActivationStrategy.TANH)
+    learner = LogisticRegression(activation_strategy=ActivationStrategy.TANH)
 
-    history = learner.train(f_t, t_t, epoch=5000, earlystop_acc=.8)
-    y_p = learner.predict(f_v)
-    print('Validation Accuracy', accuracy_score(t_v, y_p))
+    history = learner.train(f_t, t_t, epoch=5000)
+    print('Validation Accuracy', accuracy_score(t_v, learner.predict(f_v)))
 
     import matplotlib.pyplot as plt
     plt.plot(history['accuracy'])
