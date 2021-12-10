@@ -1,5 +1,5 @@
 import enum
-from typing import Dict
+from typing import Dict, List
 import random
 from abc import ABC, abstractmethod
 
@@ -40,7 +40,7 @@ class LogisticRegression:
             self.gradient_function = sigmoid_gradient
 
     def train(self, features: np.ndarray, target: np.ndarray,
-              learning_rate: float = 1e-3, epoch: int = 100, earlystop_acc: float = 1.0) -> Dict:
+              learning_rate: float = 1e-3, epoch: int = 100, earlystop_error: float = 0.0) -> Dict:
         X = np.insert(features, 0, 1.0, axis=1)
         Y = target
 
@@ -67,9 +67,11 @@ class LogisticRegression:
             if (i + 1) % 25 == 0:
                 print(f"Epoch {i + 1}: Accuracy={accuracy}, Loss={cost}")
 
-            if accuracy > earlystop_acc:
+            if cost < earlystop_error:
                 print(
-                    f"\nEarly Stopping @ {i + 1}th Epoch\nAccuracy ({accuracy}) > EarlyStopAccuracy({earlystop_acc})\n")
+                    f"\nEarly Stopping @ {i + 1}th Epoch\n"
+                    f"Error ({cost}) > EarlyStopError({earlystop_error})\n"
+                )
                 break
 
             gradient = self.gradient_function(X, Y, A)
@@ -192,21 +194,88 @@ def calculate_information_gain(dataframe: pd.DataFrame, feature: str, target: st
     return entropy - remainder
 
 
-# --------------- Preprocessing Steps ---------------
-# 1 - Impute/Remove Null Values
-# 2 - Convert Target to (-1, 1)
-# 3 - Discretization & Encoding Categorical Features
-# 4 - Feature Selection based on Information Gain
-# 5 - OneHotEncode and Drop 1 Column, Binarization
-# ---------------------------------------------------
+def process_target_feature(dataframe: pd.DataFrame, target: str, p_val, n_val) -> np.ndarray:
+    dataframe[target].replace(p_val, 1, inplace=True)
+    dataframe[target].replace(n_val, -1, inplace=True)
+    dataframe[target] = dataframe[target].astype(int)
+    return dataframe[target].values.reshape(-1, 1)
+
+
+def encode_feature_labels(dataframe: pd.DataFrame, categorical_feature_ids: List[int]):
+    for feature_id in categorical_feature_ids:
+        feature_name = dataframe.columns[feature_id]
+        dataframe[feature_name] = dataframe[feature_name].astype('category').cat.codes
+
+
+def convert_continuous_features_to_categorical(dataframe: pd.DataFrame, continuous_features: List[str]):
+    for feature in continuous_features:
+        feature_info = dataframe[feature].describe()
+        feature_bins = [
+            feature_info['min'] - 1.0,
+            feature_info['25%'],
+            feature_info['50%'],
+            feature_info['75%'],
+            feature_info['max'] + 1.0,
+        ]
+        feature_labels = [bin_value for bin_value in range(len(feature_bins) - 1)]
+        dataframe[feature] = pd.cut(dataframe[feature], feature_bins, labels=feature_labels)
+        dataframe[feature] = dataframe[feature].astype(int)
 
 
 class TelcoChurnDataset(CustomDataset):
+    def __init__(self, filename: str):
+        df = pd.read_csv(filename)
+
+        # Handle Null Values
+        df.dropna(inplace=True)
+
+        # Convert Target Feature
+        Y = process_target_feature(df, 'Churn', 'Yes', 'No')
+
+        # Encode Labels of Features
+        categorical_features_ids = [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        encode_feature_labels(df, categorical_features_ids)
+
+        # Dataset Specific Preprocessing
+        df.drop('customerID', axis=1, inplace=True)
+
+        df.TotalCharges = pd.to_numeric(df.TotalCharges, errors='coerce')
+        df.TotalCharges = df.TotalCharges.fillna(0)
+
+        # Convert Continuous Features to Categorical Features
+        continuous_features = ['tenure', 'MonthlyCharges', 'TotalCharges']
+        convert_continuous_features_to_categorical(df, continuous_features)
+
+        # Feature Selection based on Information Gain
+        threshold_ig = 0.03999
+        selected_features = [feature for feature in df.columns[:-1]\
+                             if calculate_information_gain(df, feature, df.columns[-1]) > threshold_ig]
+        df = df[selected_features]
+
+        # One-hot Encoding
+        one_hot_encodable_features = [feature for feature in df.columns if len(df[feature].unique()) > 2]
+        df = pd.get_dummies(df, prefix=one_hot_encodable_features, columns=one_hot_encodable_features, drop_first=True)
+
+        X = df.to_numpy(dtype=float)
+
+        # Clear Memory
+        del df
+        del categorical_features_ids
+        del continuous_features
+        del selected_features
+        del one_hot_encodable_features
+
+        # Stratified Train-Test Split
+        self.X_train, self.X_test, self.Y_train, self.Y_test = train_test_split(X, Y,
+                                                                                test_size=0.2,
+                                                                                random_state=SEED,
+                                                                                stratify=Y.ravel())
+
     def get_training_set(self):
-        pass
+        return self.X_train, self.Y_train
 
     def get_testing_set(self):
-        pass
+        return self.X_test, self.Y_test
 
 
 class AdultIncomeDataset(CustomDataset):
@@ -232,17 +301,15 @@ class CreditCardFraudDataset(CustomDataset):
 # ----------------------------------------------------------------------------
 
 def main():
-    from sklearn import datasets
-    feat, tgt = datasets.make_classification(1000, 7, random_state=SEED)
-    tgt = tgt.reshape(-1, 1)
-    tgt = np.where(tgt > 0, 1, -1)
 
-    f_t, t_t = feat[:-50], tgt[:-50]
-    f_v, t_v = feat[-50:], tgt[-50:]
+    t_dataset = TelcoChurnDataset('data/Telco Churn/TelcoChurn.csv')
+
+    f_t, t_t = t_dataset.get_training_set()
+    f_v, t_v = t_dataset.get_testing_set()
 
     learner = LogisticRegression(activation_strategy=ActivationStrategy.TANH)
 
-    history = learner.train(f_t, t_t, epoch=5000, earlystop_acc=0.55)
+    history = learner.train(f_t, t_t, epoch=10000, earlystop_error=0.5)
     print('Validation Accuracy', accuracy_score(t_v, learner.predict(f_v)))
 
     import matplotlib.pyplot as plt
