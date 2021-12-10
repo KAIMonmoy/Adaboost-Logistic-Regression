@@ -1,8 +1,16 @@
 import enum
 from typing import Dict
+import random
+from abc import ABC, abstractmethod
 
 import numpy as np
+import pandas as pd
 from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
 
 
 # ----------------------------------------------------------------------------
@@ -60,7 +68,8 @@ class LogisticRegression:
                 print(f"Epoch {i + 1}: Accuracy={accuracy}, Loss={cost}")
 
             if accuracy > earlystop_acc:
-                print(f"\nEarly Stopping @ {i+1}th Epoch\nAccuracy ({accuracy}) > EarlyStopAccuracy({earlystop_acc})\n")
+                print(
+                    f"\nEarly Stopping @ {i + 1}th Epoch\nAccuracy ({accuracy}) > EarlyStopAccuracy({earlystop_acc})\n")
                 break
 
             gradient = self.gradient_function(X, Y, A)
@@ -142,21 +151,98 @@ def tanh_gradient(X: np.ndarray, Y: np.ndarray, A: np.ndarray) -> np.ndarray:
 
 
 # ----------------------------------------------------------------------------
+#  AdaBoost
+# ----------------------------------------------------------------------------
+
+class AdaBoost:
+    pass
+
+
+# ----------------------------------------------------------------------------
+#  Dataset
+# ----------------------------------------------------------------------------
+
+
+class CustomDataset(ABC):
+    @abstractmethod
+    def get_training_set(self):
+        pass
+
+    @abstractmethod
+    def get_testing_set(self):
+        pass
+
+
+def calculate_binary_entropy(x: float) -> float:
+    return -x * np.log2(x) - (1 - x) * np.log2((1 - x))
+
+
+def calculate_information_gain(dataframe: pd.DataFrame, feature: str, target: str) -> float:
+    t = len(dataframe)
+    y = len(dataframe[dataframe[target] == 1])
+
+    entropy = calculate_binary_entropy(y / t)
+
+    remainder = 0
+    for value in dataframe[feature].unique():
+        kt = len(dataframe[dataframe[feature] == value])
+        ky = len(dataframe[(dataframe[feature] == value) & (dataframe[target] == 1)])
+        remainder += ((kt / t) * calculate_binary_entropy(ky / kt))
+
+    return entropy - remainder
+
+
+# --------------- Preprocessing Steps ---------------
+# 1 - Impute/Remove Null Values
+# 2 - Convert Target to (-1, 1)
+# 3 - Discretization & Encoding Categorical Features
+# 4 - Feature Selection based on Information Gain
+# 5 - OneHotEncode and Drop 1 Column, Binarization
+# ---------------------------------------------------
+
+
+class TelcoChurnDataset(CustomDataset):
+    def get_training_set(self):
+        pass
+
+    def get_testing_set(self):
+        pass
+
+
+class AdultIncomeDataset(CustomDataset):
+
+    def get_training_set(self):
+        pass
+
+    def get_testing_set(self):
+        pass
+
+
+class CreditCardFraudDataset(CustomDataset):
+
+    def get_training_set(self):
+        pass
+
+    def get_testing_set(self):
+        pass
+
+
+# ----------------------------------------------------------------------------
 #  Main
 # ----------------------------------------------------------------------------
 
 def main():
     from sklearn import datasets
-    feat, tgt = datasets.make_classification(200, 4, random_state=94)
+    feat, tgt = datasets.make_classification(1000, 7, random_state=SEED)
     tgt = tgt.reshape(-1, 1)
     tgt = np.where(tgt > 0, 1, -1)
 
-    f_t, t_t = feat[:180], tgt[:180]
-    f_v, t_v = feat[180:], tgt[180:]
+    f_t, t_t = feat[:-50], tgt[:-50]
+    f_v, t_v = feat[-50:], tgt[-50:]
 
     learner = LogisticRegression(activation_strategy=ActivationStrategy.TANH)
 
-    history = learner.train(f_t, t_t, epoch=5000)
+    history = learner.train(f_t, t_t, epoch=5000, earlystop_acc=0.55)
     print('Validation Accuracy', accuracy_score(t_v, learner.predict(f_v)))
 
     import matplotlib.pyplot as plt
