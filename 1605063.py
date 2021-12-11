@@ -5,8 +5,9 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 SEED = 0
 random.seed(SEED)
@@ -294,6 +295,13 @@ def get_selected_features(df: pd.DataFrame, info_gain_threshold: float) -> List:
             if calculate_information_gain(df, feature, df.columns[-1]) > info_gain_threshold]
 
 
+def convert_continuous_features_to_categorical_with_bin(dataframe: pd.DataFrame, feature: str, feature_bins: List):
+    feature_labels = [bin_value for bin_value in range(len(feature_bins) - 1)]
+    dataframe[feature] = pd.cut(dataframe[feature], feature_bins, labels=feature_labels)
+    dataframe[feature] = dataframe[feature].fillna(0)
+    dataframe[feature] = dataframe[feature].astype(int)
+
+
 class TelcoChurnDataset(CustomDataset):
     def __init__(self, filename: str):
         df = pd.read_csv(filename)
@@ -352,8 +360,85 @@ class TelcoChurnDataset(CustomDataset):
 
 
 class AdultIncomeDataset(CustomDataset):
-    def __init__(self):
-        self.X_train, self.X_test, self.Y_train, self.Y_test = None, None, None, None
+    def __init__(self, train_filename: str, test_filename: str):
+        df_train = pd.read_csv(train_filename, header=None)
+
+        # Handle Null Values
+        df_train.dropna(inplace=True)
+
+        df_train.columns = [
+            'age', 'workclass', 'fnlwgt', 'education', 'education-num',
+            'marital-status', 'occupation', 'relationship', 'race', 'sex',
+            'capital-gain', 'capital-loss', 'hours-per-week', 'native-country',
+            'income'
+        ]
+
+        continuous_features = [
+            'age', 'fnlwgt', 'education-num'
+        ]
+
+        categorical_features = [
+            'workclass', 'education', 'marital-status', 'occupation', 'relationship',
+            'sex', 'race', 'native-country'
+        ]
+
+        self.Y_train = process_target_feature(df_train, 'income', ' >50K', ' <=50K')
+
+        # Dataset-specific Modification 'capital-gain', 'capital-loss'
+        convert_continuous_features_to_categorical_with_bin(df_train, 'capital-gain',
+                                                            [0.0, 10.0, 5000.0, 15000.0, 100000.0])
+        convert_continuous_features_to_categorical_with_bin(df_train, 'capital-loss', [0.0, 1000.0, 3000.0, 4400.0])
+        convert_continuous_features_to_categorical_with_bin(df_train, 'hours-per-week', [0.0, 30.0, 45.0, 100.0])
+
+        # Encode Labels of Features
+        encode_feature_labels(df_train, categorical_features)
+
+        # Convert Continuous Features to Categorical Features
+        convert_continuous_features_to_categorical(df_train, continuous_features)
+
+        # Feature Selection based on Information Gain
+        selected_features = get_selected_features(df_train, info_gain_threshold=0.04)
+        df_train = df_train[selected_features]
+
+        # One-hot Encoding
+        one_hot_encodable_features = [feature for feature in df_train.columns if len(df_train[feature].unique()) > 2]
+        df_train = pd.get_dummies(df_train, prefix=one_hot_encodable_features, columns=one_hot_encodable_features,
+                                  drop_first=True)
+        self.X_train = df_train.to_numpy()
+
+        df_test = pd.read_csv(test_filename, skiprows=1, header=None)
+
+        # Handle Null Values
+        df_test.dropna(inplace=True)
+
+        df_test.columns = [
+            'age', 'workclass', 'fnlwgt', 'education', 'education-num',
+            'marital-status', 'occupation', 'relationship', 'race', 'sex',
+            'capital-gain', 'capital-loss', 'hours-per-week', 'native-country',
+            'income'
+        ]
+
+        self.Y_test = process_target_feature(df_test, 'income', ' >50K.', ' <=50K.')
+
+        # Dataset-specific Modification 'capital-gain', 'capital-loss'
+        convert_continuous_features_to_categorical_with_bin(df_test, 'capital-gain',
+                                                            [0.0, 10.0, 5000.0, 15000.0, 100000.0])
+        convert_continuous_features_to_categorical_with_bin(df_test, 'capital-loss', [0.0, 1000.0, 3000.0, 4400.0])
+        convert_continuous_features_to_categorical_with_bin(df_test, 'hours-per-week', [0.0, 30.0, 45.0, 100.0])
+
+        # Encode Labels of Features
+        encode_feature_labels(df_test, categorical_features)
+
+        # Convert Continuous Features to Categorical Features
+        convert_continuous_features_to_categorical(df_test, continuous_features)
+
+        # Feature Selection based on Information Gain
+        df_test = df_test[selected_features]
+
+        # One-hot Encoding
+        df_test = pd.get_dummies(df_test, prefix=one_hot_encodable_features, columns=one_hot_encodable_features,
+                                 drop_first=True)
+        self.X_test = df_test.to_numpy()
 
     def get_training_set(self):
         return self.X_train, self.Y_train
@@ -363,8 +448,27 @@ class AdultIncomeDataset(CustomDataset):
 
 
 class CreditCardFraudDataset(CustomDataset):
-    def __init__(self):
-        self.X_train, self.X_test, self.Y_train, self.Y_test = None, None, None, None
+    def __init__(self, filename: str):
+        df = pd.read_csv(filename)
+        df.dropna(inplace=True)
+
+        df = pd.concat([
+            df[df['Class'] == 0].sample(n=5000, random_state=SEED),
+            df[df['Class'] == 1]
+        ])
+
+        Y = process_target_feature(df, 'Class', 1, 0)
+
+        for feature in df.columns[:-1]:
+            scaler = StandardScaler()
+            df[feature] = scaler.fit_transform(df[[feature]])
+
+        X = df[df.columns[:-1]].to_numpy()
+
+        self.X_train, self.X_test, self.Y_train, self.Y_test = train_test_split(X, Y,
+                                                                                test_size=0.2,
+                                                                                random_state=SEED,
+                                                                                stratify=Y.ravel())
 
     def get_training_set(self):
         return self.X_train, self.Y_train
@@ -378,20 +482,54 @@ class CreditCardFraudDataset(CustomDataset):
 # ----------------------------------------------------------------------------
 
 def main():
-    t_dataset = TelcoChurnDataset('data/Telco Churn/TelcoChurn.csv')
+    dataset_1 = TelcoChurnDataset('data/Telco Churn/TelcoChurn.csv')
+    dataset_2 = AdultIncomeDataset('data/Adult Dataset/adult.data', 'data/Adult Dataset/adult.test')
+    dataset_3 = CreditCardFraudDataset('data/Credit Card Fraud Detection/creditcard.csv')
 
-    f_t, t_t = t_dataset.get_training_set()
-    f_v, t_v = t_dataset.get_testing_set()
+    f_t, t_t = dataset_2.get_training_set()
+    f_v, t_v = dataset_2.get_testing_set()
 
-    # learner = LogisticRegression(activation_strategy=ActivationStrategy.TANH)
-    #
-    # learner.train(f_t, t_t, learning_rate=1e-3, epoch=10000, earlystop_error=0.1)
-    # print('LR Test Accuracy', accuracy_score(t_v, learner.predict(f_v)), '\n')
+    learner = LogisticRegression(activation_strategy=ActivationStrategy.TANH)
+    learner.train(f_t, t_t, learning_rate=1e-3, epoch=10000, earlystop_error=0.1)
+
+    p_t = learner.predict(f_t)
+    p_v = learner.predict(f_v)
+
+    print('\nLR Train Accuracy', accuracy_score(t_t, p_t))
+    ((tn, fp), (fn, tp)) = confusion_matrix(t_t, p_t)
+    sensitivity = tp / (tp + fn)
+    specificity = tn / (tn + fp)
+    precision = tp / (tp + fp)
+    fdr = fp / (fp + tp)
+    f1_score = 2 * tp / (2 * tp + fp + fn)
+    print('sensitivity', sensitivity)
+    print('specificity', specificity)
+    print('precision', precision)
+    print('fdr', fdr)
+    print('f1_score', f1_score)
+
+    print('\nLR Test Accuracy', accuracy_score(t_v, p_v))
+    ((tn, fp), (fn, tp)) = confusion_matrix(t_t, p_t)
+    sensitivity = tp / (tp + fn)
+    specificity = tn / (tn + fp)
+    precision = tp / (tp + fp)
+    fdr = fp / (fp + tp)
+    f1_score = 2 * tp / (2 * tp + fp + fn)
+
+    print('sensitivity', sensitivity)
+    print('specificity', specificity)
+    print('precision', precision)
+    print('fdr', fdr)
+    print('f1_score', f1_score)
 
     adaboost = AdaBoost(LogisticRegression, ActivationStrategy.TANH)
-    adaboost.train(f_t, t_t, 5, learning_rate=7.5e-4)
+    adaboost.train(f_t, t_t, n_round=15, learning_rate=7.5e-4)
 
-    print('AdaBoost Test Accuracy', accuracy_score(t_v, adaboost.predict(f_v)), '\n')
+    p_t = adaboost.predict(f_t)
+    p_v = adaboost.predict(f_v)
+
+    print('\nAdaBoost Train Accuracy', accuracy_score(t_t, p_t), '\n')
+    print('\nAdaBoost Test Accuracy', accuracy_score(t_v, p_v), '\n')
 
 
 if __name__ == "__main__":
